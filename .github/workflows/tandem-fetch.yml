@@ -11,17 +11,15 @@ jobs:
       - name: Install gdown
         run: pip install gdown
 
-      - name: Download from Google Drive (Correct Syntax)
+      - name: Download from Google Drive
         run: |
           ID="${{ github.event.inputs.drive_id }}"
-          # שימוש בפורמט המדויק לגרסה 6.0: O גדולה עבור Output
           python3 -m gdown "$ID" -O tandem.apk
           
-          # בדיקת גודל (מינימום 1MB כדי לוודא שזה APK אמיתי)
           size=$(stat -c%s "tandem.apk")
           echo "Downloaded size: $size bytes"
           if [ $size -lt 1000000 ]; then
-            echo "❌ Error: Download failed (file too small)."
+            echo "❌ Error: Download failed."
             exit 1
           fi
 
@@ -43,3 +41,4 @@ jobs:
           subject: "✅ עדכון אפליקציית טנדם הצליח"
           body: "שלום, קובץ הטנדם עודכן בהצלחה בשרתים.\nלינק להורדה: https://object.mk-devices.ovh/loop/aaps/tandam/tandam.apk"
           to: ${{ github.event.inputs.user_email }}
+          from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>" # כאן התיקון
