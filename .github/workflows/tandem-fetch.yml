@@ -1,48 +1,34 @@
 name: Tandem APK Fetch & Deploy
-
 on:
   workflow_dispatch:
     inputs:
       drive_id:
-        description: 'The Google Drive File ID'
+        description: 'Drive ID'
         required: true
       user_email:
-        description: 'Email address of the requester'
+        description: 'User Email'
         required: true
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Download from Google Drive (Advanced)
+      - name: Download from Google Drive (Smart)
         run: |
           FILE_ID="${{ github.event.inputs.drive_id }}"
-          # שימוש בקוקיז כדי לעקוף את דף האזהרה של גוגל לקבצים גדולים
           CONFIRM=$(curl -sc /tmp/cookies.txt "https://drive.google.com/uc?export=download&id=${FILE_ID}" | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p')
-          
           if [ -n "$CONFIRM" ]; then
             curl -Lb /tmp/cookies.txt "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILE_ID}" -o tandem.apk
           else
             curl -L "https://drive.google.com/uc?export=download&id=${FILE_ID}" -o tandem.apk
           fi
-          
-          # בדיקה שהקובץ הוא לא דף HTML
-          if [ $(stat -c%s "tandem.apk") -lt 100000 ]; then
-            echo "❌ Error: Downloaded file is too small. Check sharing permissions."
-            exit 1
-          fi
-
-      - name: Upload to Contabo S3
+          if [ $(stat -c%s "tandem.apk") -lt 100000 ]; then exit 1; fi
+      - name: Upload to S3
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
           ENDPOINT: https://eu2.contabostorage.com
-        run: |
-          aws s3 cp tandem.apk s3://${{ secrets.S3_BUCKET }}/aaps/tandam/tandam.apk \
-          --endpoint-url $ENDPOINT --acl public-read
-
-      - name: Send Success Mail
-        if: success()
+        run: aws s3 cp tandem.apk s3://${{ secrets.S3_BUCKET }}/aaps/tandam/tandam.apk --endpoint-url $ENDPOINT --acl public-read
+      - name: Mail
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -50,6 +36,6 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: "✅ עדכון אפליקציית טנדם הסתיים בהצלחה"
-          body: "שלום,\n\nקובץ הטנדם עודכן בשרתים.\nלינק: https://object.mk-devices.ovh/aaps/tandam/tandam.apk"
+          body: "שלום, קובץ הטנדם עודכן בשרתים.\nלינק: https://object.mk-devices.ovh/aaps/tandam/tandam.apk"
           to: ${{ github.event.inputs.user_email }}
           from: "AAPS Automation"

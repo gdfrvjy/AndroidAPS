@@ -1,0 +1,67 @@
+name: AAPS Build & Deploy Pro
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FIREBASE_LOOP_DOC_URL: https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA.json
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.sync_needed }}
+      upstream_tag: ${{ steps.get_tag.outputs.upstream_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get Tag
+        id: get_tag
+        run: echo "upstream_tag=$(curl -s https://api.github.com/repos/nightscout/AndroidAPS/releases/latest | jq -r .tag_name)" >> $GITHUB_OUTPUT
+      - name: Check Sync
+        id: check
+        run: |
+          git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
+          git fetch upstream master
+          BEHIND=$(git rev-list --count HEAD..upstream/master 2>/dev/null || echo 0)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$BEHIND" -gt 0 ]; then echo "sync_needed=true" >> $GITHUB_OUTPUT; else echo "sync_needed=false" >> $GITHUB_OUTPUT; fi
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync
+        run: |
+          git config --global user.name "Action"; git config --global user.email "action@github.com"
+          git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
+          git fetch upstream master; git merge upstream/master --allow-unrelated-histories -m "Sync"; git push origin HEAD:master || echo "OK"
+      - uses: actions/setup-java@v4
+        with: { java-version: '21', distribution: 'temurin' }
+      - run: ./gradlew :app:assembleFullRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        with: { name: unsigned-apk, path: app/build/outputs/apk/full/release/*unsigned.apk }
+  sign-and-deploy:
+    needs: [check-version, build]
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: unsigned-apk }
+      - name: Sign
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.jks
+          UNSIGNED=$(find . -name "*unsigned.apk" | head -n 1)
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
+          "$BT/zipalign" -v 4 "$UNSIGNED" aligned.apk
+          "$BT/apksigner" sign --ks release.jks --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} --ks-key-alias ${{ secrets.KEY_ALIAS }} --key-pass pass:${{ secrets.KEY_PASSWORD }} --out signed.apk aligned.apk
+      - env: { AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}, AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }} }
+        run: aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/aaps/AAPS.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
+      - name: Update Firebase
+        env: { VER: ${{ needs.check-version.outputs.upstream_tag }} }
+        run: |
+          LINE1="גירסה זמינה: $VER (עודכן ב: $(date +'%d/%m/%Y'))"
+          JSON=$(curl -s "$FIREBASE_LOOP_DOC_URL"); CURRENT=$(echo "$JSON" | jq -r '.["לופ"] // empty')
+          if [ -n "$CURRENT" ]; then REST=$(printf '%s\n' "$CURRENT" | tail -n +2); else REST="הגירסה מעודכנת."; fi
+          TEXT=$(printf '%s\n%s' "$LINE1" "$REST")
+          jq -n --arg val "$TEXT" '{"לופ": $val}' > p.json
+          curl -X PATCH "$FIREBASE_LOOP_DOC_URL" -d @p.json
