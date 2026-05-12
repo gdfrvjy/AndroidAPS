@@ -21,43 +21,56 @@ jobs:
           git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
           git fetch upstream master
           BEHIND=$(git rev-list --count HEAD..upstream/master 2>/dev/null || echo 0)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$BEHIND" -gt 0 ]; then echo "sync_needed=true" >> $GITHUB_OUTPUT; else echo "sync_needed=false" >> $GITHUB_OUTPUT; fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$BEHIND" -gt 0 ]; then
+            echo "sync_needed=true" >> $GITHUB_OUTPUT
+          else
+            echo "sync_needed=false" >> $GITHUB_OUTPUT
+          fi
   build:
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
-    permissions: { contents: write }
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - name: Sync
-        run: |
+        with:
+          fetch-depth: 0
+      - run: |
           git config --global user.name "Action"; git config --global user.email "action@github.com"
           git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
           git fetch upstream master; git merge upstream/master --allow-unrelated-histories -m "Sync"; git push origin master || echo "OK"
       - uses: actions/setup-java@v4
-        with: { java-version: '21', distribution: 'temurin' }
+        with:
+          java-version: '21'
+          distribution: 'temurin'
       - run: ./gradlew :app:assembleFullRelease --no-daemon
       - uses: actions/upload-artifact@v4
-        with: { name: unsigned-apk, path: app/build/outputs/apk/full/release/*unsigned.apk }
+        with:
+          name: unsigned-apk
+          path: app/build/outputs/apk/full/release/*unsigned.apk
   sign-and-deploy:
     needs: [check-version, build]
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: unsigned-apk }
+        with:
+          name: unsigned-apk
       - name: Sign
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.jks
           UNSIGNED=$(find . -name "*unsigned.apk" | head -n 1)
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
-          "$BT/zipalign" -v 4 "$UNSIGNED" aligned.apk
-          "$BT/apksigner" sign --ks release.jks --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} --ks-key-alias ${{ secrets.KEY_ALIAS }} --key-pass pass:${{ secrets.KEY_PASSWORD }} --out signed.apk aligned.apk
-      - env: { AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}, AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }} }
+          $BT/zipalign -v 4 "$UNSIGNED" aligned.apk
+          $BT/apksigner sign --ks release.jks --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} --ks-key-alias ${{ secrets.KEY_ALIAS }} --key-pass pass:${{ secrets.KEY_PASSWORD }} --out signed.apk aligned.apk
+      - env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
         run: aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/aaps/AAPS.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
-      - name: Firebase
-        env: { VER: ${{ needs.check-version.outputs.upstream_tag }} }
+      - name: Update Firebase
+        env:
+          VER: ${{ needs.check-version.outputs.upstream_tag }}
         run: |
           L1="גירסה זמינה: $VER (עודכן ב: $(date +'%d/%m/%Y'))"
           J=$(curl -s "$FIREBASE_LOOP_DOC_URL"); CUR=$(echo "$J" | jq -r '.["לופ"] // empty')
@@ -72,6 +85,6 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: "✅ AAPS Build Successful"
-          body: "הבנייה הסתיימה! הגרסה עודכנה ב-S3 ובפיירבייס.\nלינק: https://object.mk-devices.ovh/loop/aaps/AAPS.apk"
+          body: "AndroidAPS עודכן בהצלחה ב-S3 ובפיירבייס."
           to: "8461950@gmail.com"
           from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
