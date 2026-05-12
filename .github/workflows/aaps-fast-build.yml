@@ -14,8 +14,6 @@ jobs:
       upstream_tag: ${{ steps.get_tag.outputs.upstream_tag }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - id: get_tag
         run: echo "upstream_tag=$(curl -s https://api.github.com/repos/nightscout/AndroidAPS/releases/latest | jq -r .tag_name)" >> $GITHUB_OUTPUT
       - id: check
@@ -32,25 +30,21 @@ jobs:
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Sync and Update Fork
+      - name: Sync Code
         run: |
           git config --global user.name "Action"; git config --global user.email "action@github.com"
           git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
-          git fetch upstream master
-          git merge upstream/master --allow-unrelated-histories -m "Auto-sync from upstream" || echo "OK"
-          git push origin HEAD:master || echo "Nothing new to push"
+          git fetch upstream master; git merge upstream/master --allow-unrelated-histories -m "Sync"; git push origin master || echo "OK"
       - uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: gradle
-      - run: ./gradlew :app:assembleFullRelease --no-daemon
+      - name: Build
+        run: ./gradlew :app:assembleFullRelease --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-apk
@@ -68,45 +62,22 @@ jobs:
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.jks
           UNSIGNED=$(find . -name "*unsigned.apk" | head -n 1)
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
-          "$BT/zipalign" -v 4 "$UNSIGNED" aligned.apk
-          "$BT/apksigner" sign --ks release.jks --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} --ks-key-alias ${{ secrets.KEY_ALIAS }} --key-pass pass:${{ secrets.KEY_PASSWORD }} --out signed.apk aligned.apk
-      - name: Upload to S3
+          $BT/zipalign -v 4 "$UNSIGNED" aligned.apk
+          $BT/apksigner sign --ks release.jks --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} --ks-key-alias ${{ secrets.KEY_ALIAS }} --key-pass pass:${{ secrets.KEY_PASSWORD }} --out signed.apk aligned.apk
+      - name: S3 Upload
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
-        run: |
-          aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/aaps/AAPS.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
-      - name: Update Firebase
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+        run: aws s3 cp signed.apk s3://$S3_BUCKET/aaps/AAPS.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
+      - name: Firebase Update
         env:
           VER: ${{ needs.check-version.outputs.upstream_tag }}
         run: |
-          DATE_TAG=$(date +'%d/%m/%Y')
-          # קבלת הערך הקיים
+          LINE1="גירסה זמינה: $VER (עודכן ב: $(date +'%d/%m/%Y'))"
           JSON=$(curl -s "$FIREBASE_LOOP_DOC_URL")
           CURRENT=$(echo "$JSON" | jq -r '.["לופ"] // empty')
-          
-          LINE1="גירסה זמינה: $VER (עודכן ב: $DATE_TAG)"
-          
-          if [ -n "$CURRENT" ]; then
-             # לוקח הכל מהשורה השנייה והלאה
-             REST=$(printf '%s\n' "$CURRENT" | tail -n +2)
-          else
-             REST="אזהרה!! חובה לבצע גיבוי נתונים לפני העדכון."
-          fi
-          
-          # חיבור השורה הראשונה החדשה עם שאר הטקסט הישן
-          FULL_TEXT=$(printf '%s\n%s' "$LINE1" "$REST")
-          jq -n --arg val "$FULL_TEXT" '{"לופ": $val}' > payload.json
-          
-          curl -X PATCH "$FIREBASE_LOOP_DOC_URL" \
-            -H "Content-Type: application/json; charset=utf-8" \
-            -d @payload.json
-      - uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "✅ AAPS Build Successful"
-          body: "הבנייה של AndroidAPS הסתיימה בהצלחה! הגרסה עודכנה ב-S3 ובפיירבייס.\nלינק: https://object.mk-devices.ovh/loop/aaps/AAPS.apk"
-          to: "8461950@gmail.com"
+          if [ -n "$CURRENT" ]; then REST=$(printf '%s\n' "$CURRENT" | tail -n +2); else REST="הגירסה מעודכנת."; fi
+          TEXT=$(printf '%s\n%s' "$LINE1" "$REST")
+          jq -n --arg val "$TEXT" '{"לופ": $val}' > p.json
+          curl -X PATCH "$FIREBASE_LOOP_DOC_URL" -d @p.json

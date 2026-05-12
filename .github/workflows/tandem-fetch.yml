@@ -2,40 +2,33 @@ name: Tandem APK Fetch & Deploy
 on:
   workflow_dispatch:
     inputs:
-      drive_id:
-        description: 'Drive ID'
-        required: true
-      user_email:
-        description: 'User Email'
-        required: true
+      drive_id: { required: true }
+      user_email: { required: true }
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Download from Google Drive (Smart)
+      - name: Download Drive APK
         run: |
-          FILE_ID="${{ github.event.inputs.drive_id }}"
-          CONFIRM=$(curl -sc /tmp/cookies.txt "https://drive.google.com/uc?export=download&id=${FILE_ID}" | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p')
+          ID="${{ github.event.inputs.drive_id }}"
+          CONFIRM=$(curl -sc /tmp/cookies.txt "https://drive.google.com/uc?export=download&id=${ID}" | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p')
           if [ -n "$CONFIRM" ]; then
-            curl -Lb /tmp/cookies.txt "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILE_ID}" -o tandem.apk
+            curl -Lb /tmp/cookies.txt "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${ID}" -o tandem.apk
           else
-            curl -L "https://drive.google.com/uc?export=download&id=${FILE_ID}" -o tandem.apk
+            curl -L "https://drive.google.com/uc?export=download&id=${ID}" -o tandem.apk
           fi
           if [ $(stat -c%s "tandem.apk") -lt 100000 ]; then exit 1; fi
-      - name: Upload to S3
-        env:
+      - env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
-          ENDPOINT: https://eu2.contabostorage.com
-        run: aws s3 cp tandem.apk s3://${{ secrets.S3_BUCKET }}/aaps/tandam/tandam.apk --endpoint-url $ENDPOINT --acl public-read
-      - name: Mail
-        uses: dawidd6/action-send-mail@v3
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+        run: aws s3 cp tandem.apk s3://$S3_BUCKET/aaps/tandam/tandam.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
+      - uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "✅ עדכון אפליקציית טנדם הסתיים בהצלחה"
-          body: "שלום, קובץ הטנדם עודכן בשרתים.\nלינק: https://object.mk-devices.ovh/aaps/tandam/tandam.apk"
+          subject: "✅ עדכון טנדם הצליח"
+          body: "שלום, קובץ הטנדם עודכן. לינק: https://object.mk-devices.ovh/aaps/tandam/tandam.apk"
           to: ${{ github.event.inputs.user_email }}
-          from: "AAPS Automation"
