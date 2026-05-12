@@ -14,54 +14,99 @@ jobs:
       upstream_tag: ${{ steps.get_tag.outputs.upstream_tag }}
     steps:
       - uses: actions/checkout@v4
-      - name: Get Tag
-        id: get_tag
+        with:
+          fetch-depth: 0
+      - id: get_tag
         run: echo "upstream_tag=$(curl -s https://api.github.com/repos/nightscout/AndroidAPS/releases/latest | jq -r .tag_name)" >> $GITHUB_OUTPUT
-      - name: Check Sync
-        id: check
+      - id: check
         run: |
           git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
           git fetch upstream master
           BEHIND=$(git rev-list --count HEAD..upstream/master 2>/dev/null || echo 0)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$BEHIND" -gt 0 ]; then echo "sync_needed=true" >> $GITHUB_OUTPUT; else echo "sync_needed=false" >> $GITHUB_OUTPUT; fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$BEHIND" -gt 0 ]; then
+            echo "sync_needed=true" >> $GITHUB_OUTPUT
+          else
+            echo "sync_needed=false" >> $GITHUB_OUTPUT
+          fi
   build:
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Sync
+        with:
+          fetch-depth: 0
+      - name: Sync and Update Fork
         run: |
           git config --global user.name "Action"; git config --global user.email "action@github.com"
           git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
-          git fetch upstream master; git merge upstream/master --allow-unrelated-histories -m "Sync"; git push origin HEAD:master || echo "OK"
+          git fetch upstream master
+          git merge upstream/master --allow-unrelated-histories -m "Auto-sync from upstream" || echo "OK"
+          git push origin HEAD:master || echo "Nothing new to push"
       - uses: actions/setup-java@v4
-        with: { java-version: '21', distribution: 'temurin' }
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
       - run: ./gradlew :app:assembleFullRelease --no-daemon
       - uses: actions/upload-artifact@v4
-        with: { name: unsigned-apk, path: app/build/outputs/apk/full/release/*unsigned.apk }
+        with:
+          name: unsigned-apk
+          path: app/build/outputs/apk/full/release/*unsigned.apk
   sign-and-deploy:
     needs: [check-version, build]
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: unsigned-apk }
-      - name: Sign
+        with:
+          name: unsigned-apk
+      - name: Sign APK
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.jks
           UNSIGNED=$(find . -name "*unsigned.apk" | head -n 1)
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
           "$BT/zipalign" -v 4 "$UNSIGNED" aligned.apk
           "$BT/apksigner" sign --ks release.jks --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} --ks-key-alias ${{ secrets.KEY_ALIAS }} --key-pass pass:${{ secrets.KEY_PASSWORD }} --out signed.apk aligned.apk
-      - env: { AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}, AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }} }
-        run: aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/aaps/AAPS.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
-      - name: Update Firebase
-        env: { VER: ${{ needs.check-version.outputs.upstream_tag }} }
+      - name: Upload to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
         run: |
-          LINE1="גירסה זמינה: $VER (עודכן ב: $(date +'%d/%m/%Y'))"
-          JSON=$(curl -s "$FIREBASE_LOOP_DOC_URL"); CURRENT=$(echo "$JSON" | jq -r '.["לופ"] // empty')
-          if [ -n "$CURRENT" ]; then REST=$(printf '%s\n' "$CURRENT" | tail -n +2); else REST="הגירסה מעודכנת."; fi
-          TEXT=$(printf '%s\n%s' "$LINE1" "$REST")
-          jq -n --arg val "$TEXT" '{"לופ": $val}' > p.json
-          curl -X PATCH "$FIREBASE_LOOP_DOC_URL" -d @p.json
+          aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/aaps/AAPS.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
+      - name: Update Firebase
+        env:
+          VER: ${{ needs.check-version.outputs.upstream_tag }}
+        run: |
+          DATE_TAG=$(date +'%d/%m/%Y')
+          # קבלת הערך הקיים
+          JSON=$(curl -s "$FIREBASE_LOOP_DOC_URL")
+          CURRENT=$(echo "$JSON" | jq -r '.["לופ"] // empty')
+          
+          LINE1="גירסה זמינה: $VER (עודכן ב: $DATE_TAG)"
+          
+          if [ -n "$CURRENT" ]; then
+             # לוקח הכל מהשורה השנייה והלאה
+             REST=$(printf '%s\n' "$CURRENT" | tail -n +2)
+          else
+             REST="אזהרה!! חובה לבצע גיבוי נתונים לפני העדכון."
+          fi
+          
+          # חיבור השורה הראשונה החדשה עם שאר הטקסט הישן
+          FULL_TEXT=$(printf '%s\n%s' "$LINE1" "$REST")
+          jq -n --arg val "$FULL_TEXT" '{"לופ": $val}' > payload.json
+          
+          curl -X PATCH "$FIREBASE_LOOP_DOC_URL" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            -d @payload.json
+      - uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "✅ AAPS Build Successful"
+          body: "הבנייה של AndroidAPS הסתיימה בהצלחה! הגרסה עודכנה ב-S3 ובפיירבייס.\nלינק: https://object.mk-devices.ovh/loop/aaps/AAPS.apk"
+          to: "8461950@gmail.com"
