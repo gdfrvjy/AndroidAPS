@@ -8,20 +8,20 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Install gdown (Best for GDrive)
+      - name: Install gdown
         run: pip install gdown
 
-      - name: Download from Google Drive (Smart Mode)
+      - name: Download from Google Drive (Correct Syntax)
         run: |
           ID="${{ github.event.inputs.drive_id }}"
-          # שימוש בכלי gdown שעוקף את אזהרת הווירוסים באופן אוטומטי
-          gdown --id "$ID" -o tandem.apk
+          # שימוש בפורמט המדויק לגרסה 6.0: O גדולה עבור Output
+          python3 -m gdown "$ID" -O tandem.apk
           
-          # בדיקה שהקובץ תקין
+          # בדיקת גודל (מינימום 1MB כדי לוודא שזה APK אמיתי)
           size=$(stat -c%s "tandem.apk")
           echo "Downloaded size: $size bytes"
           if [ $size -lt 1000000 ]; then
-            echo "❌ Error: File too small, download probably failed."
+            echo "❌ Error: Download failed (file too small)."
             exit 1
           fi
 
@@ -41,5 +41,5 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: "✅ עדכון אפליקציית טנדם הצליח"
-          body: "שלום, קובץ הטנדם עודכן בהצלחה. לינק: https://object.mk-devices.ovh/loop/aaps/tandam/tandam.apk"
+          body: "שלום, קובץ הטנדם עודכן בהצלחה בשרתים.\nלינק להורדה: https://object.mk-devices.ovh/loop/aaps/tandam/tandam.apk"
           to: ${{ github.event.inputs.user_email }}
