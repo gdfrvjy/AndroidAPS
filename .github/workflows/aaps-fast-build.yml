@@ -72,11 +72,28 @@ jobs:
         env:
           VER: ${{ needs.check-version.outputs.upstream_tag }}
         run: |
-          L1="גירסה זמינה: $VER (עודכן ב: $(date +'%d/%m/%Y'))"
-          J=$(curl -s "$FIREBASE_LOOP_DOC_URL"); CUR=$(echo "$J" | jq -r '.["לופ"] // empty')
-          if [ -n "$CUR" ]; then REST=$(printf '%s\n' "$CUR" | tail -n +2); else REST="מעודכן."; fi
-          FULL=$(printf '%s\n%s' "$L1" "$REST")
-          jq -n --arg v "$FULL" '{"לופ": $v}' > p.json
+          NEW_L1="גירסה זמינה: $VER (עודכן ב: $(date +'%d/%m/%Y'))"
+          # שליפת הערך הנוכחי
+          CURRENT_JSON=$(curl -s "$FIREBASE_LOOP_DOC_URL")
+          # חילוץ הטקסט הקיים תחת "לופ"
+          EXISTING_TEXT=$(echo "$CURRENT_JSON" | jq -r '.["לופ"] // ""')
+          
+          # הסרת השורה הראשונה ושמירת שאר הטקסט
+          if [ -n "$EXISTING_TEXT" ]; then
+            REST=$(echo "$EXISTING_TEXT" | sed '1d')
+          else
+            REST=""
+          fi
+          
+          # בניית הטקסט החדש (שורה ראשונה חדשה + השאר)
+          if [ -z "$REST" ]; then
+            FULL_TEXT="$NEW_L1"
+          else
+            FULL_TEXT=$(printf "%s\n%s" "$NEW_L1" "$REST")
+          fi
+          
+          # עדכון חזרה לפיירבייס
+          jq -n --arg v "$FULL_TEXT" '{"לופ": $v}' > p.json
           curl -X PATCH "$FIREBASE_LOOP_DOC_URL" -d @p.json
       - uses: dawidd6/action-send-mail@v3
         with:
