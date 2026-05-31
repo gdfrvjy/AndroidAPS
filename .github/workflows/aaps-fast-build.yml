@@ -10,36 +10,32 @@ jobs:
   check-version:
     runs-on: ubuntu-latest
     outputs:
-      should_build: ${{ steps.check.outputs.sync_needed }}
+      should_build: ${{ steps.check.outputs.should_build }}
       upstream_tag: ${{ steps.get_tag.outputs.upstream_tag }}
     steps:
-      - uses: actions/checkout@v4
       - id: get_tag
         run: echo "upstream_tag=$(curl -s https://api.github.com/repos/nightscout/AndroidAPS/releases/latest | jq -r .tag_name)" >> $GITHUB_OUTPUT
       - id: check
         run: |
-          git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
-          git fetch upstream master
-          BEHIND=$(git rev-list --count HEAD..upstream/master 2>/dev/null || echo 0)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$BEHIND" -gt 0 ]; then
-            echo "sync_needed=true" >> $GITHUB_OUTPUT
+          TAG="${{ steps.get_tag.outputs.upstream_tag }}"
+          STORED=$(curl -s "$FIREBASE_LOOP_DOC_URL" | jq -r '.["לופ"] // ""')
+          if [[ "$STORED" == *"$TAG"* ]] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "should_build=false" >> $GITHUB_OUTPUT
           else
-            echo "sync_needed=false" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> $GITHUB_OUTPUT
           fi
   build:
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - run: |
-          git config --global user.name "Action"; git config --global user.email "action@github.com"
           git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
-          git fetch upstream master; git merge upstream/master --allow-unrelated-histories -m "Sync"; git push origin master || echo "OK"
+          git fetch upstream --tags
+          git checkout ${{ needs.check-version.outputs.upstream_tag }}
       - uses: actions/setup-java@v4
         with:
           java-version: '21'
