@@ -93,13 +93,17 @@ jobs:
             --endpoint-url https://eu2.contabostorage.com --acl public-read \
             --content-type application/json
       - uses: dawidd6/action-send-mail@v3
+        continue-on-error: true
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "✅ AAPS Build Successful"
-          body: "AndroidAPS עודכן בהצלחה ב-S3 ובפיירבייס."
+          subject: "✅ AAPS Build: ${{ needs.check-version.outputs.upstream_tag }}"
+          body: |
+            ✅ AndroidAPS עודכן בהצלחה!
+            גירסה: ${{ needs.check-version.outputs.upstream_tag }}
+            הורדה: https://object.mk-devices.ovh/aaps/AAPS.apk
           to: "8461950@gmail.com"
           from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
 
