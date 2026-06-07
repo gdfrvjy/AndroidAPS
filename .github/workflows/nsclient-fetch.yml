@@ -51,12 +51,16 @@ jobs:
             --content-type application/json
       - if: steps.check.outputs.skip == 'false'
         uses: dawidd6/action-send-mail@v3
+        continue-on-error: true
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "✅ NSClient Updated"
-          body: "NSClient עודכן ב-S3 ובפיירבייס."
+          subject: "✅ NSClient/AAPSClient עודכן: ${{ steps.get_tag.outputs.tag }}"
+          body: |
+            ✅ NSClient / AAPSClient עודכן בהצלחה!
+            גירסה: ${{ steps.get_tag.outputs.tag }}
+            הורדה: https://object.mk-devices.ovh/aaps/AAPSclient.apk
           to: "8461950@gmail.com"
           from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
