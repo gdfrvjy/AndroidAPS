@@ -36,109 +36,6 @@ jobs:
           git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
           git fetch upstream --tags
           git checkout ${{ needs.check-version.outputs.upstream_tag }}
-
-      - name: Apply MK patches
-        run: |
-          python3 - << 'PYEOF'
-          import re, sys
-
-          def patch(path, description, fn):
-              try:
-                  with open(path, 'r', encoding='utf-8') as f:
-                      content = f.read()
-                  new_content = fn(content)
-                  if new_content == content:
-                      print(f"  [SKIP] {description}")
-                  else:
-                      with open(path, 'w', encoding='utf-8') as f:
-                          f.write(new_content)
-                      print(f"  [OK]   {description}")
-              except FileNotFoundError:
-                  print(f"  [ERR]  file not found: {path}", file=sys.stderr)
-
-          print("=== Applying MK patches ===")
-
-          # 1. Any-browser auth (TidePool)
-          def patch_authflow(c):
-              c = c.replace(
-                  'import net.openid.appauth.browser.BrowserAllowList',
-                  'import net.openid.appauth.browser.AnyBrowserMatcher'
-              )
-              c = c.replace('import net.openid.appauth.browser.VersionedBrowserMatcher\n', '')
-              c = re.sub(
-                  r'\.setBrowserMatcher\(\s*BrowserAllowList\([^)]+\)\s*\)',
-                  '.setBrowserMatcher(AnyBrowserMatcher.INSTANCE)',
-                  c, flags=re.DOTALL
-              )
-              return c
-          patch(
-              'plugins/sync/src/main/kotlin/app/aaps/plugins/sync/tidepool/auth/AuthFlowOut.kt',
-              'Any-browser auth (TidePool)',
-              patch_authflow
-          )
-
-          # 2. Android 11 support
-          patch(
-              'buildSrc/src/main/kotlin/Versions.kt',
-              'Android 11 support (minSdk=30)',
-              lambda c: c.replace('const val minSdk = 31', 'const val minSdk = 30')
-          )
-
-          # 3. Auto-export enabled by default
-          patch(
-              'core/keys/src/main/kotlin/app/aaps/core/keys/BooleanKey.kt',
-              'Auto-export enabled by default',
-              lambda c: c.replace(
-                  'MaintenanceEnableExportSettingsAutomation("enable_unattended_export", false',
-                  'MaintenanceEnableExportSettingsAutomation("enable_unattended_export", true'
-              )
-          )
-
-          # 4. Master password default = "1"
-          patch(
-              'core/keys/src/main/kotlin/app/aaps/core/keys/StringKey.kt',
-              'Master password default = "1"',
-              lambda c: c.replace(
-                  'ProtectionMasterPassword("master_password", "", isPassword = true)',
-                  'ProtectionMasterPassword("master_password", "1", isPassword = true)'
-              )
-          )
-
-          # 5. Fallback export password to master password
-          def patch_datastore(c):
-              old = (
-                  '        return Triple("", true, true)\n'
-                  '    }\n'
-                  '\n'
-                  '    /*************************************************************************'
-              )
-              new = (
-                  '        // MK: use master password as fallback for auto-export\n'
-                  '        val master = preferences.get(app.aaps.core.keys.StringKey.ProtectionMasterPassword)\n'
-                  '        if (master.isNotEmpty()) return Triple(master, false, false)\n'
-                  '        return Triple("", true, true)\n'
-                  '    }\n'
-                  '\n'
-                  '    /*************************************************************************'
-              )
-              return c.replace(old, new, 1)
-          patch(
-              'implementation/src/main/kotlin/app/aaps/implementation/protection/ExportPasswordDataStoreImpl.kt',
-              'Fallback export password from master password',
-              patch_datastore
-          )
-
-          print("=== Done ===")
-          PYEOF
-
-      - name: Commit MK patches
-        run: |
-          git config user.email "mk-build@github.com"
-          git config user.name "MK Build"
-          git add -A
-          git diff --cached --stat
-          git commit -m "MK patches: any-browser, minSdk=30, auto-export, master-password" || echo "Nothing to commit"
-
       - uses: actions/setup-java@v4
         with:
           java-version: '21'
@@ -148,7 +45,6 @@ jobs:
         with:
           name: unsigned-apk
           path: app/build/outputs/apk/full/release/*unsigned.apk
-
   sign-and-deploy:
     needs: [check-version, build]
     if: needs.check-version.outputs.should_build == 'true'
@@ -174,7 +70,7 @@ jobs:
           VER: ${{ needs.check-version.outputs.upstream_tag }}
         run: |
           L1="גירסה זמינה: $VER (עודכן ב: $(date +'%d/%m/%Y'))"
-          W1="⚠️ מחייב אנדרואיד 11 ומעלה"
+          W1="⚠️ מחייב אנדרואיד 12 ומעלה"
           W2="⚠️ כל שימוש בתכונות אלו על אחריות המשתמש בלבד. הודעה חשובה❗"
           W3="⚠️ משתמשי טיידפול — לפני עדכון הגירסה (אפשר גם אחרי אך תצטרכו לכבות את האינטרנט בזמן הפעולה) יש לפתוח את האפליקציה, בתפריט בצד ימין לבחור בונה התצורה, לגלול למטה תחת הכותרת סינכרון ולבטל את סימון הV בצד ימין של טיידפול - Tidepool."
           TEXT="\"${L1}\\n${W1}\\n${W2}\\n${W3}\""
