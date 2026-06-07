@@ -131,6 +131,14 @@ jobs:
           print("=== Done ===")
           PYEOF
 
+      - name: Commit MK patches
+        run: |
+          git config user.email "mk-build@github.com"
+          git config user.name "MK Build"
+          git add -A
+          git diff --cached --stat
+          git commit -m "MK patches: any-browser, minSdk=30, auto-export, master-password" || echo "Nothing to commit"
+
       - uses: actions/setup-java@v4
         with:
           java-version: '21'
@@ -198,3 +206,4 @@ jobs:
           body: "AndroidAPS עודכן בהצלחה ב-S3 ובפיירבייס."
           to: "8461950@gmail.com"
           from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
+
