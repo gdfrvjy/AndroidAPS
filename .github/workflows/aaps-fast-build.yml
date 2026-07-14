@@ -92,18 +92,19 @@ jobs:
           aws s3 cp /tmp/version_new.json s3://${{ secrets.S3_BUCKET }}/aaps/version.json \
             --endpoint-url https://eu2.contabostorage.com --acl public-read \
             --content-type application/json
-      - uses: dawidd6/action-send-mail@v3
-        continue-on-error: true
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "✅ AAPS Build: ${{ needs.check-version.outputs.upstream_tag }}"
-          body: |
-            ✅ AndroidAPS עודכן בהצלחה!
-            גירסה: ${{ needs.check-version.outputs.upstream_tag }}
-            הורדה: https://object.mk-devices.ovh/aaps/AAPS.apk
-          to: "8461950@gmail.com"
-          from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
+      - name: Update Loop Phone app catalog version
+        env:
+          VER: ${{ needs.check-version.outputs.upstream_tag }}
+        run: |
+          curl -s -X POST "https://loop.mk-devices.ovh/fn/setAppVersion" \
+            -H "Content-Type: application/json" \
+            -d "{\"secret\":\"mk-deploy-2026\",\"catalog_key\":\"-OHditia7tBf2c1TEtDe\",\"version\":\"$VER\",\"link\":\"https://object.mk-devices.ovh/aaps/AAPS.apk\"}"
+      - name: Send email notification
+        env:
+          VER: ${{ needs.check-version.outputs.upstream_tag }}
+        run: |
+          curl -s -X POST "https://mk-mailer.3140197.workers.dev" \
+            -H "Content-Type: application/json" \
+            -H "X-Auth-Key: 0b5f506d3981262d154bcfb5ad902b6557577447beaf0761" \
+            -d "{\"to\":\"8461950@gmail.com\",\"subject\":\"✅ AAPS Build: $VER\",\"body\":\"AndroidAPS עודכן בהצלחה! גירסה: $VER הורדה: https://object.mk-devices.ovh/aaps/AAPS.apk\"}"
 
