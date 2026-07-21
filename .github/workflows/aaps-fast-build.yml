@@ -6,6 +6,8 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   FIREBASE_LOOP_DOC_URL: https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA.json
+  S3_PATH: loop-phone/app/AAPS.apk
+  S3_APK_URL: https://object.mk-devices.ovh/loop-phone/app/AAPS.apk
 jobs:
   check-version:
     runs-on: ubuntu-latest
@@ -64,7 +66,7 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
-        run: aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/aaps/AAPS.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
+        run: aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/${{ env.S3_PATH }} --endpoint-url https://eu2.contabostorage.com --acl public-read
       - name: Update Firebase
         env:
           VER: ${{ needs.check-version.outputs.upstream_tag }}
@@ -85,7 +87,7 @@ jobs:
           aws s3 cp s3://${{ secrets.S3_BUCKET }}/aaps/version.json /tmp/version.json \
             --endpoint-url https://eu2.contabostorage.com 2>/dev/null || echo '{}' > /tmp/version.json
           jq --arg v "$VER" \
-             --arg u "https://object.mk-devices.ovh/aaps/AAPS.apk" \
+             --arg u "${{ env.S3_APK_URL }}" \
              --arg d "$(date +'%d/%m/%Y')" \
              '.aaps = {"name": "AndroidAPS", "version": $v, "url": $u, "updated": $d}' \
              /tmp/version.json > /tmp/version_new.json
@@ -98,7 +100,7 @@ jobs:
         run: |
           curl -s -X POST "https://loop.mk-devices.ovh/fn/setAppVersion" \
             -H "Content-Type: application/json" \
-            -d "{\"secret\":\"mk-deploy-2026\",\"catalog_key\":\"-OHditia7tBf2c1TEtDe\",\"version\":\"$VER\",\"link\":\"https://object.mk-devices.ovh/aaps/AAPS.apk\"}"
+            -d "{\"secret\":\"mk-deploy-2026\",\"catalog_key\":\"-OHditia7tBf2c1TEtDe\",\"version\":\"$VER\",\"link\":\"${{ env.S3_APK_URL }}\"}"
       - name: Send email notification
         env:
           VER: ${{ needs.check-version.outputs.upstream_tag }}
@@ -106,5 +108,5 @@ jobs:
           curl -s -X POST "https://mk-mailer.3140197.workers.dev" \
             -H "Content-Type: application/json" \
             -H "X-Auth-Key: 0b5f506d3981262d154bcfb5ad902b6557577447beaf0761" \
-            -d "{\"to\":\"8461950@gmail.com\",\"subject\":\"✅ AAPS Build: $VER\",\"body\":\"AndroidAPS עודכן בהצלחה! גירסה: $VER הורדה: https://object.mk-devices.ovh/aaps/AAPS.apk\"}"
+            -d "{\"to\":\"8461950@gmail.com\",\"subject\":\"✅ AAPS Build: $VER\",\"body\":\"AndroidAPS עודכן בהצלחה! גירסה: $VER הורדה: ${{ env.S3_APK_URL }}\"}"
 
