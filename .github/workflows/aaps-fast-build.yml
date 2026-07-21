@@ -94,13 +94,6 @@ jobs:
           aws s3 cp /tmp/version_new.json s3://${{ secrets.S3_BUCKET }}/aaps/version.json \
             --endpoint-url https://eu2.contabostorage.com --acl public-read \
             --content-type application/json
-      - name: Update Loop Phone app catalog version
-        env:
-          VER: ${{ needs.check-version.outputs.upstream_tag }}
-        run: |
-          curl -s -X POST "https://loop.mk-devices.ovh/fn/setAppVersion" \
-            -H "Content-Type: application/json" \
-            -d "{\"secret\":\"mk-deploy-2026\",\"catalog_key\":\"-OHditia7tBf2c1TEtDe\",\"version\":\"$VER\",\"link\":\"${{ env.S3_APK_URL }}\"}"
       - name: Send email notification
         env:
           VER: ${{ needs.check-version.outputs.upstream_tag }}
